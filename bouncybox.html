@@ -43,6 +43,7 @@
   <canvas id="sim"></canvas>
 
   <script>
+
     // =====================
     // Geometry (inches)
     // =====================
@@ -99,12 +100,20 @@
     // =====================
     // Ball state (inches, inches/sec)
     // =====================
-    const ball = {
-      x: BOX_W * 0.25,
-      y: BOX_H * 0.50,
-      vx: 0.05,
-      vy: 0.03
-    };
+    const balls = [
+      {
+        x: BOX_W * 0.25,
+        y: BOX_H * 0.50,
+        vx: 0.05,
+        vy: 0.03
+      },
+      {
+        x: BOX_W * 0.75,
+        y: BOX_H * 0.40,
+        vx: -0.04,
+        vy: 0.02
+      }
+    ];
 
     // =====================
     // Counters
@@ -274,36 +283,129 @@
     // =====================
     // Collision search and 1-second event advance
     // =====================
+    function ballBallCollisionTime(b1, b2) {
+      // Returns earliest t >= 0 when centers are 2R apart, or null.
+      // Uses relative motion quadratic: |r + u t|^2 = (2R)^2
+      const rx = b2.x - b1.x;
+      const ry = b2.y - b1.y;
+      const ux = b2.vx - b1.vx;
+      const uy = b2.vy - b1.vy;
+
+      const R = BALL_RADIUS_IN;
+      const radiusSum = 2 * R;
+
+      const A = ux * ux + uy * uy;
+      const B = 2 * (rx * ux + ry * uy);
+      const C = (rx * rx + ry * ry) - radiusSum * radiusSum;
+
+      if (A === 0) return null; // no relative motion
+
+      const disc = B * B - 4 * A * C;
+      if (disc < 0) return null;
+
+      const s = Math.sqrt(disc);
+      const t1 = (-B - s) / (2 * A);
+      const t2 = (-B + s) / (2 * A);
+
+      // We want the earliest non-negative collision time.
+      let t = null;
+      if (t1 >= 0) t = t1;
+      else if (t2 >= 0) t = t2;
+
+      return t;
+    }
+
+    function resolveBallBallCollision(b1, b2) {
+      // Perfectly elastic collision, equal masses, disks.
+      // Update velocities along the collision normal at impact.
+      const dx = b2.x - b1.x;
+      const dy = b2.y - b1.y;
+      const dist = Math.hypot(dx, dy) || 1;
+
+      const nx = dx / dist;
+      const ny = dy / dist;
+
+      // Relative velocity along normal
+      const dvx = b1.vx - b2.vx;
+      const dvy = b1.vy - b2.vy;
+      const vn = dvx * nx + dvy * ny;
+
+      // If separating, do nothing
+      if (vn <= 0) return;
+
+      // Equal mass elastic: swap normal components => impulse of magnitude vn
+      b1.vx -= vn * nx;
+      b1.vy -= vn * ny;
+      b2.vx += vn * nx;
+      b2.vy += vn * ny;
+    }
+
     function findNextCollision(maxTime) {
-      // First pass: find the minimum t
+      // Find earliest event among:
+      //  - ball vs segments (respecting inbound())
+      //  - ball vs ball
       let bestT = null;
-      const hits = [];
 
-      for (const seg of segments) {
-        const hit = timeToSegmentCollision(ball.x, ball.y, ball.vx, ball.vy, seg);
-        if (!hit) continue;
-        if (hit.t > maxTime + 1e-12) continue;
+      // First pass: find minimum t
+      for (let bi = 0; bi < balls.length; bi++) {
+        const b = balls[bi];
 
-        if (bestT === null || hit.t < bestT) {
-          bestT = hit.t;
+        for (const seg of segments) {
+          if (!inbound(seg, b.vx, b.vy)) continue;
+
+          const hit = timeToSegmentCollision(b.x, b.y, b.vx, b.vy, seg);
+          if (!hit) continue;
+          if (hit.t > maxTime + 1e-12) continue;
+
+          if (bestT === null || hit.t < bestT) bestT = hit.t;
+        }
+      }
+
+      // Ball-ball candidates
+      for (let i = 0; i < balls.length; i++) {
+        for (let j = i + 1; j < balls.length; j++) {
+          const t = ballBallCollisionTime(balls[i], balls[j]);
+          if (t === null) continue;
+          if (t > maxTime + 1e-12) continue;
+          if (bestT === null || t < bestT) bestT = t;
         }
       }
 
       if (bestT === null) return null;
 
-      // Second pass: collect all segments that collide at (approximately) the same time.
-      // This handles corner hits (two walls at once) without special-casing wall orientation.
+      // Second pass: collect all events at ~same time.
       const TOL = 1e-9;
-      for (const seg of segments) {
-        const hit = timeToSegmentCollision(ball.x, ball.y, ball.vx, ball.vy, seg);
-        if (!hit) continue;
-        if (hit.t > maxTime + 1e-12) continue;
-        if (Math.abs(hit.t - bestT) <= TOL) {
-          hits.push({ nx: hit.nx, ny: hit.ny });
+      const wallHits = []; // {bi, nx, ny}
+      const pairHits = []; // {i, j}
+
+      for (let bi = 0; bi < balls.length; bi++) {
+        const b = balls[bi];
+
+        for (const seg of segments) {
+          if (!inbound(seg, b.vx, b.vy)) continue;
+
+          const hit = timeToSegmentCollision(b.x, b.y, b.vx, b.vy, seg);
+          if (!hit) continue;
+          if (hit.t > maxTime + 1e-12) continue;
+
+          if (Math.abs(hit.t - bestT) <= TOL) {
+            wallHits.push({ bi, nx: hit.nx, ny: hit.ny });
+          }
         }
       }
 
-      return { t: bestT, hits };
+      for (let i = 0; i < balls.length; i++) {
+        for (let j = i + 1; j < balls.length; j++) {
+          const t = ballBallCollisionTime(balls[i], balls[j]);
+          if (t === null) continue;
+          if (t > maxTime + 1e-12) continue;
+          if (Math.abs(t - bestT) <= TOL) {
+            pairHits.push({ i, j });
+          }
+        }
+      }
+
+      return { t: bestT, wallHits, pairHits };
     }
 
     function simulateOneSecond() {
@@ -311,57 +413,58 @@
       let iters = 0;
       let collisionsThisSecond = 0;
 
-      // A tiny forward-time nudge to avoid re-colliding at t=0 due to floating point equality.
-      // This is NOT “backing out”; it’s advancing an infinitesimal time after resolving the collision(s).
-      //const NUDGE_T = 1e-7;
-
-      while (timeLeft > 1e-7 && iters++ < 50) {
+      while (timeLeft > 1e-7 && iters++ < 200) {
         const col = findNextCollision(timeLeft);
         if (!col) {
-          ball.x += ball.vx * timeLeft;
-          ball.y += ball.vy * timeLeft;
+          for (const b of balls) {
+            b.x += b.vx * timeLeft;
+            b.y += b.vy * timeLeft;
+          }
           timeLeft = 0;
           break;
         }
 
-        // advance exactly to collision
+        // advance exactly to collision time (all balls)
         if (col.t > 0) {
-          ball.x += ball.vx * col.t;
-          ball.y += ball.vy * col.t;
+          for (const b of balls) {
+            b.x += b.vx * col.t;
+            b.y += b.vy * col.t;
+          }
           timeLeft -= col.t;
         }
 
-        // Apply all simultaneous collisions (corner hits) by reflecting sequentially.
-        // Orient each normal so it opposes the incoming velocity.
-        for (const h of col.hits) {
+        // Apply wall collisions
+        for (const h of col.wallHits) {
+          const b = balls[h.bi];
           let nx = h.nx, ny = h.ny;
-          const dot = ball.vx * nx + ball.vy * ny;
+          const dot = b.vx * nx + b.vy * ny;
           if (dot > 0) { nx = -nx; ny = -ny; }
-          const v2 = reflectVelocity(ball.vx, ball.vy, nx, ny);
-          ball.vx = v2.vx;
-          ball.vy = v2.vy;
+          const v2 = reflectVelocity(b.vx, b.vy, nx, ny);
+          b.vx = v2.vx;
+          b.vy = v2.vy;
         }
 
-        collisionsThisSecond += Math.max(1, col.hits.length);
+        // Apply ball-ball collisions
+        for (const p of col.pairHits) {
+          resolveBallBallCollision(balls[p.i], balls[p.j]);
+        }
 
-        // Nudge forward a tiny amount of time so we leave the boundary.
-        //if (timeLeft > 0) {
-        //  const dt = Math.min(NUDGE_T, timeLeft);
-        //  ball.x += ball.vx * dt;
-        //  ball.y += ball.vy * dt;
-        //  timeLeft -= dt;
-        //}
+        collisionsThisSecond += Math.max(1, col.wallHits.length + col.pairHits.length);
       }
 
       // Finish remaining time straight if any
       if (timeLeft > 1e-7) {
-        ball.x += ball.vx * timeLeft;
-        ball.y += ball.vy * timeLeft;
+        for (const b of balls) {
+          b.x += b.vx * timeLeft;
+          b.y += b.vy * timeLeft;
+        }
       }
 
-      // Keep numerically bounded (should not be needed often now)
-      ball.x = Math.max(0, Math.min(BOX_W, ball.x));
-      ball.y = Math.max(0, Math.min(BOX_H, ball.y));
+      // Keep numerically bounded
+      for (const b of balls) {
+        b.x = Math.max(0, Math.min(BOX_W, b.x));
+        b.y = Math.max(0, Math.min(BOX_H, b.y));
+      }
 
       colSpan.textContent = String(collisionsThisSecond);
     }
@@ -408,9 +511,11 @@
 
       // Ball
       ctx.fillStyle = '#f55';
-      ctx.beginPath();
-      ctx.arc(ix(ball.x), iy(ball.y), BALL_RADIUS_IN * pxPerInch, 0, Math.PI * 2);
-      ctx.fill();
+      for (const ball of balls) {
+	  ctx.beginPath();
+	  ctx.arc(ix(ball.x), iy(ball.y), BALL_RADIUS_IN * pxPerInch, 0, Math.PI * 2);
+	  ctx.fill();
+      }
 
       ctx.restore();
     }
@@ -419,7 +524,9 @@
     // Tick: count time + simulate one second + draw
     // =====================
     function tick() {
-      if (ball.x < WALL_CENTER) leftTime++; else rightTime++;
+      for (const b of balls) {
+        if (b.x < WALL_CENTER) leftTime++; else rightTime++;
+      }
       leftSpan.textContent = String(leftTime);
       rightSpan.textContent = String(rightTime);
 
@@ -433,10 +540,13 @@
     // Optional: click to randomize velocity a bit
     canvas.addEventListener('click', () => {
       // small random perturbation
-      ball.vx += (Math.random() - 0.5) * 4;
-      ball.vy += (Math.random() - 0.5) * 4;
+      for (const b of balls) {
+        b.vx += (Math.random() - 0.5) * 4;
+        b.vy += (Math.random() - 0.5) * 4;
+      }
     });
-  </script>
+  
+</script>
 </body>
 </html>
 
