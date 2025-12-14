@@ -100,20 +100,10 @@
     // =====================
     // Ball state (inches, inches/sec)
     // =====================
-    const balls = [
-      {
-        x: BOX_W * 0.25,
-        y: BOX_H * 0.50,
-        vx: 0.05,
-        vy: 0.03
-      },
-      {
-        x: BOX_W * 0.75,
-        y: BOX_H * 0.40,
-        vx: -0.04,
-        vy: 0.02
-      }
-    ];
+    const balls = [];
+    for (i = 0; i < 8; i++) {
+        balls.push( {x:BOX_W * Math.random(), y:BOX_H * Math.random(), vx:Math.random()/2, vy:Math.random()/2 } );
+    }
 
     // =====================
     // Counters
