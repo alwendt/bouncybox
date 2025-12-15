@@ -60,6 +60,7 @@
     const HOLE_HALF_RIGHT = 0.5;          // 1" tall at right face
 
     const BALL_RADIUS_IN = 0.125;         // 1/4" diameter (draw only)
+    let currentTime = 0;
 
     // =====================
     // Canvas setup
@@ -398,19 +399,15 @@
       return { t: bestT, wallHits, pairHits };
     }
 
-    function simulateOneSecond() {
-      let timeLeft = 1.0;
+    function simulateUntil(nextTick) {
       let iters = 0;
       let collisionsThisSecond = 0;
 
-      while (timeLeft > 1e-7 && iters++ < 200) {
-        const col = findNextCollision(timeLeft);
+      while (currentTime < nextTick && iters++ < 200) {
+
+        const col = findNextCollision(nextTick - currentTime);
+
         if (!col) {
-          for (const b of balls) {
-            b.x += b.vx * timeLeft;
-            b.y += b.vy * timeLeft;
-          }
-          timeLeft = 0;
           break;
         }
 
@@ -420,7 +417,7 @@
             b.x += b.vx * col.t;
             b.y += b.vy * col.t;
           }
-          timeLeft -= col.t;
+          currentTime += col.t;
         }
 
         // Apply wall collisions
@@ -443,10 +440,10 @@
       }
 
       // Finish remaining time straight if any
-      if (timeLeft > 1e-7) {
+      if (currentTime < nextTick) {
         for (const b of balls) {
-          b.x += b.vx * timeLeft;
-          b.y += b.vy * timeLeft;
+          b.x += b.vx * (nextTick - currentTime);
+          b.y += b.vy * (nextTick - currentTime);
         }
       }
 
@@ -457,6 +454,7 @@
       }
 
       colSpan.textContent = String(collisionsThisSecond);
+      currentTime = nextTick;
     }
 
     // =====================
@@ -520,7 +518,7 @@
       leftSpan.textContent = String(leftTime);
       rightSpan.textContent = String(rightTime);
 
-      simulateOneSecond();
+      simulateUntil(currentTime + 1);
       drawScene();
     }
 
